@@ -7,26 +7,17 @@ import pandas as pd
 import streamlit as st
 
 from app.components.theme import apply_theme
-from app.data.database import SQLiteBodyDataStore
+from app.data.database import get_datastore
 from app.utils.metrics import build_insights, filter_by_range, to_kg, to_lb, weekly_trend_lb
-
-
-def _profile_level(weight_lb: float | None) -> str:
-    if weight_lb is None:
-        return "Iniciando"
-    if weight_lb < 140:
-        return "Lean Focus"
-    if weight_lb < 180:
-        return "Balanced"
-    return "Power Build"
 
 
 def render_dashboard() -> None:
     apply_theme()
-    db = SQLiteBodyDataStore()
+    db = get_datastore()
     db.init()
 
-    st.title("Body Intelligence")
+    # Título principal
+    st.title("Analiticas Corporales")
     st.caption("Seguimiento corporal")
 
     tabs = st.tabs(["Resumen", "Registro", "Meta", "Insights"])
@@ -35,44 +26,91 @@ def render_dashboard() -> None:
     current_lb = float(df["weight_lb"].iloc[-1]) if not df.empty else None
 
     with tabs[0]:
+        # Tarjetas de Perfil
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"<div class='card'><div class='metric-title'>Nombre</div><div class='metric-value'>{profile.name}</div></div>", unsafe_allow_html=True)
         with c2:
             st.markdown(f"<div class='card'><div class='metric-title'>Edad</div><div class='metric-value'>{profile.age} años</div></div>", unsafe_allow_html=True)
+        
         c3, c4 = st.columns(2)
         with c3:
             value = f"{current_lb:.1f} lb" if current_lb else "--"
             st.markdown(f"<div class='card'><div class='metric-title'>Peso actual</div><div class='metric-value'>{value}</div></div>", unsafe_allow_html=True)
-        with c4:
-            st.markdown(f"<div class='card'><div class='metric-title'>Estado físico</div><div class='metric-value accent'>{_profile_level(current_lb)}</div></div>", unsafe_allow_html=True)
 
         st.markdown("### Evolución")
-        time_range = st.segmented_control("Rango", ["3 meses", "6 meses", "1 año", "Todo"], default="6 meses")
+        
+        # --- FILA DE CONTROLES (Rango + Botón Refresh) ---
+        col_range, col_refresh = st.columns([0.88, 0.12])
+        
+        with col_range:
+            # label_visibility="collapsed" para que se alinee perfectamente con el botón
+            time_range = st.segmented_control(
+                "Rango", 
+                ["3 meses", "6 meses", "1 año", "Todo"], 
+                default="6 meses",
+                label_visibility="collapsed"
+            )
+        
+        with col_refresh:
+            if st.button(":material/refresh:", help="Sincronizar con Google Sheets", use_container_width=True):
+                st.cache_resource.clear()
+                st.rerun()
+
         plot_df = filter_by_range(df, time_range) if time_range else df
+            
         if plot_df.empty:
             st.info("Agrega registros para ver la evolución.")
         else:
+            # --- GRÁFICO ---
             line = (
                 alt.Chart(plot_df)
-                .mark_line(point=alt.OverlayMarkDef(color="#630000", size=70), color="#e63946", interpolate="monotone")
+                .mark_line(point=alt.OverlayMarkDef(color="#e63946", size=70), color="#e63946", interpolate="monotone")
                 .encode(
                     x=alt.X("entry_date:T", title=None, axis=alt.Axis(labelColor="#9ca3af", format="%d %b")),
-                    y=alt.Y("weight_lb:Q", title="lb", axis=alt.Axis(labelColor="#9ca3af")),
-                    tooltip=[alt.Tooltip("entry_date:T", title="Fecha"), alt.Tooltip("weight_lb:Q", title="Peso (lb)", format=".1f")],
+                    y=alt.Y(
+                        "weight_lb:Q", 
+                        title="lb", 
+                        scale=alt.Scale(zero=False), 
+                        axis=alt.Axis(labelColor="#9ca3af")
+                    ),
+                    tooltip=[
+                        alt.Tooltip("entry_date:T", title="Fecha"), 
+                        alt.Tooltip("weight_lb:Q", title="Peso (lb)", format=".1f")
+                    ],
                 )
                 .properties(height=280)
             )
             st.altair_chart(line, use_container_width=True)
-            history = plot_df.sort_values("entry_date", ascending=False).copy()
-            history["change"] = history["weight_lb"].diff(-1).fillna(0)
-            for _, r in history.iterrows():
-                delta = r["change"]
-                icon = "⬆️" if delta > 0 else "⬇️" if delta < 0 else "➡️"
-                st.markdown(
-                    f"<div class='card'><b>{r['entry_date'].strftime('%d %b %Y')}</b><br>{r['weight_lb']:.1f} lb · {icon} {delta:+.1f} lb</div>",
-                    unsafe_allow_html=True,
-                )
+
+            # --- HISTORIAL DESPLEGABLE ---
+            with st.expander("Ver Historial de Registros", expanded=False):
+                hist_mode = st.radio("Mostrar:", ["Últimos 10", "Todo"], horizontal=True, label_visibility="collapsed")
+                
+                history = df.sort_values("entry_date", ascending=True).copy()
+                history["change"] = history["weight_lb"].diff()
+                history = history.sort_values("entry_date", ascending=False)
+                
+                if hist_mode == "Últimos 10":
+                    history = history.head(10)
+
+                for _, r in history.iterrows():
+                    delta = r["change"]
+                    if pd.isna(delta):
+                        status = "➡️ 0.0 lb (Inicio)"
+                        color = "#9ca3af"
+                    else:
+                        icon = "⬆️" if delta > 0 else "⬇️" if delta < 0 else "➡️"
+                        color = "#e63946" if delta > 0 else "#2a9d8f"
+                        status = f"{icon} {delta:+.1f} lb"
+                    
+                    st.markdown(
+                        f"<div class='card' style='margin-bottom: 10px; padding: 10px;'>"
+                        f"<b>{r['entry_date'].strftime('%d %b %Y')}</b><br>"
+                        f"{r['weight_lb']:.1f} lb · <span style='color:{color}'>{status}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
 
     with tabs[1]:
         with st.form("profile_form"):
@@ -87,7 +125,7 @@ def render_dashboard() -> None:
             st.subheader("Registrar peso")
             c1, c2 = st.columns([2, 1])
             with c1:
-                w = st.number_input("Peso", min_value=50.0, max_value=700.0, value=150.0, step=0.1)
+                w = st.number_input("Peso", min_value=50.0, max_value=700.0, value=146.0, step=0.1)
             with c2:
                 unit = st.selectbox("Unidad", ["lb", "kg"])
             d = st.date_input("Fecha", value=date.today())
@@ -122,12 +160,3 @@ def render_dashboard() -> None:
         for ins in build_insights(df):
             st.markdown(f"<div class='card'>{ins}</div>", unsafe_allow_html=True)
 
-    with st.expander("Arquitectura preparada para Google Sheets"):
-        st.markdown(
-            """
-- Capa de datos desacoplada en `app/data/database.py` con interfaz homogénea.
-- Implementación activa: `SQLiteBodyDataStore`.
-- Implementación futura: `GoogleSheetsBodyDataStore` (gspread + `st.secrets`).
-- Para Streamlit Cloud: guardar credenciales en `.streamlit/secrets.toml`.
-            """
-        )
