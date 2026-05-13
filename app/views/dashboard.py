@@ -113,25 +113,32 @@ def render_dashboard() -> None:
                     )
 
     with tabs[1]:
-        with st.form("profile_form"):
-            st.subheader("Perfil")
-            name = st.text_input("Nombre", value=profile.name)
-            age = st.number_input("Edad", min_value=12, max_value=90, value=profile.age)
-            if st.form_submit_button("Guardar perfil"):
-                db.upsert_profile(name, int(age))
-                st.success("Perfil actualizado")
+            with st.form("profile_form"):
+                st.subheader("Perfil")
+                name = st.text_input("Nombre", value=profile.name)
+                age = st.number_input("Edad", min_value=12, max_value=90, value=profile.age)
+                if st.form_submit_button("Guardar perfil"):
+                    db.upsert_profile(name, int(age))
+                    st.success("Perfil actualizado")
+                    # IMPORTANTE: Limpiar caché y reiniciar para ver cambios
+                    st.cache_resource.clear()
+                    st.rerun()
 
-        with st.form("weight_form"):
-            st.subheader("Registrar peso")
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                w = st.number_input("Peso", min_value=50.0, max_value=700.0, value=146.0, step=0.1)
-            with c2:
-                unit = st.selectbox("Unidad", ["lb", "kg"])
-            d = st.date_input("Fecha", value=date.today())
-            if st.form_submit_button("Guardar registro"):
-                db.add_weight_entry(d, to_lb(w, unit))
-                st.success("Peso registrado")
+            with st.form("weight_form"):
+                st.subheader("Registrar peso")
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    w = st.number_input("Peso", min_value=50.0, max_value=700.0, value=146.0, step=0.1)
+                with c2:
+                    unit = st.selectbox("Unidad", ["lb", "kg"])
+                d = st.date_input("Fecha", value=date.today())
+                if st.form_submit_button("Guardar registro"):
+                    # Realiza la escritura en Google Sheets
+                    db.add_weight_entry(d, to_lb(w, unit))
+                    st.success("Peso registrado")
+                    # IMPORTANTE: Forzar la recarga de datos
+                    st.cache_resource.clear()
+                    st.rerun()
 
     with tabs[2]:
         st.subheader("Meta corporal")
